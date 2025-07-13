@@ -1,25 +1,38 @@
-﻿using System.ComponentModel.DataAnnotations;
+﻿namespace TransitTrackerWebApi.Models;
+
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
-using NetTopologySuite.Geometries;
 
-namespace TransitTrackerWebApi.Models;
-
+[Table("routes")]
 public class Route
 {
     [Key]
-    public Guid Id { get; set; }
+    [Column("id")]
+    public int Id { get; set; }
 
-    // GTFS shape_id (unik identifierare för ruttens form)
     [Required]
-    public string ShapeId { get; set; } = string.Empty;
+    [ForeignKey("Agency")]
+    [Column("agency_id")]
+    public int AgencyId { get; set; }
 
-    // Valfritt namn
-    public string Name { get; set; } = string.Empty;
+    public Agency? Agency { get; set; }
 
-    // GeoJSON som text, t.ex. för frontend-bruk
-    [Column(TypeName = "jsonb")]
-    public string GeoJsonShape { get; set; } = string.Empty;
+    [Required]
+    [Column("gtfs_route_id")]
+    public string GtfsRouteId { get; set; } = null!;
 
-    // Geometrin som PostGIS LineString (används av spatial queries)
-    public LineString? Geom { get; set; }
+    [Column("short_name")]
+    public string? ShortName { get; set; }
+
+    [Column("long_name")]
+    public string? LongName { get; set; }
+
+    [Column("route_type")]
+    public int RouteType { get; set; }
+
+    [Column("color")]
+    public string? Color { get; set; }
+
+    [Column("text_color")]
+    public string? TextColor { get; set; }
 }
