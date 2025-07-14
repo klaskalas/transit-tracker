@@ -10,6 +10,7 @@ public interface IRoutesService
     Task<Route> AddRouteAsync(Route route);
     Task<bool> UpdateRouteAsync(Route route);
     Task<bool> DeleteRouteAsync(int id);
+    Task<string> GetRouteGeoJsonAsync(int routeId);
 }
 
 
@@ -50,5 +51,10 @@ public class RoutesService(RoutesRepository routesRepository) : IRoutesService
     public async Task<bool> DeleteRouteAsync(int id)
     {
         return await routesRepository.DeleteRouteAsync(id);
+    }
+
+    public async Task<string> GetRouteGeoJsonAsync(int routeId)
+    {
+        return await routesRepository.GetRouteGeoJsonFeatureCollectionAsync(routeId);
     }
 }

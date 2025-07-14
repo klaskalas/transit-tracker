@@ -14,11 +14,11 @@ public class RoutesController(AppDbContext db, IRoutesService routesService) : C
     public async Task<IActionResult> GetAllRoutes() =>
         Ok(await routesService.GetAllRoutesAsync());
 
-    [HttpGet("{id:guid}/shape")]
-    public async Task<IActionResult> GetShape(Guid id)
+    [HttpGet("{id:int}/shape")]
+    public async Task<IActionResult> GetShapes(int id)
     {
-        var route = await db.RouteShapes.FindAsync(id);
-        return route == null ? NotFound() : Ok(route);
+        var route = await routesService.GetRouteGeoJsonAsync(id);
+        return Ok(route);
     }
 
     [HttpPost("{id:guid}/complete")]

@@ -12,4 +12,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Shape> Shapes => Set<Shape>();
     public DbSet<RouteShape> RouteShapes => Set<RouteShape>();
     public DbSet<UserRouteProgress> UserRouteProgress => Set<UserRouteProgress>();
+    
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<RouteShape>()
+            .HasKey(rs => new { rs.RouteId, rs.GtfsShapeId });
+    }
 }

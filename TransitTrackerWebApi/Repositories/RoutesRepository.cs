@@ -1,5 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Route = TransitTrackerWebApi.Models.Route;
+using NetTopologySuite.Features;
+using NetTopologySuite.IO;
 
 namespace TransitTrackerWebApi.Repositories;
 
@@ -44,5 +46,21 @@ public class RoutesRepository
         _context.Routes.Remove(route);
         var affected = await _context.SaveChangesAsync();
         return affected > 0;
+    }
+    
+    public async Task<string> GetRouteGeoJsonFeatureCollectionAsync(int routeId)
+    {
+        var geometries = await (
+            from rs in _context.RouteShapes
+            join sl in _context.ShapeLines on rs.GtfsShapeId equals sl.GtfsShapeId
+            where rs.RouteId == routeId
+            select sl.Geom
+        ).ToListAsync();
+
+        var features = geometries.Select(geom => new Feature(geom, new AttributesTable())).ToList();
+        var featureCollection = new FeatureCollection(features);
+
+        var writer = new GeoJsonWriter();
+        return writer.Write(featureCollection);
     }
 }
