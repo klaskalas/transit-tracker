@@ -1,4 +1,7 @@
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 using TransitTrackerWebApi.Repositories;
 using TransitTrackerWebApi.Services;
 
@@ -14,6 +17,26 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services.AddScoped<RoutesRepository>();
 builder.Services.AddScoped<IRoutesService, RoutesService>();
+builder.Services.AddScoped<JwtTokenService>();
+builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        var jwtSection = builder.Configuration.GetSection("Jwt");
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = jwtSection["Issuer"],
+            ValidAudience = jwtSection["Audience"],
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSection["Key"] ?? string.Empty))
+        };
+    });
+
+builder.Services.AddAuthorization();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -42,6 +65,8 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseCors("AllowSpecificOrigin");
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapControllers();
 

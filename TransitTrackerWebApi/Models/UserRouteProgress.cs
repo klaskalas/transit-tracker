@@ -13,4 +13,5 @@ public class UserRouteProgress
     public DateTime CompletedAt { get; set; }
 
     public Route? Route { get; set; }
+    public User? User { get; set; }
 }
