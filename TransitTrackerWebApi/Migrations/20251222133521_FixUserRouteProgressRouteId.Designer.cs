@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NetTopologySuite.Geometries;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -12,9 +13,11 @@ using TransitTrackerWebApi.Repositories;
 namespace TransitTrackerWebApi.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251222133521_FixUserRouteProgressRouteId")]
+    partial class FixUserRouteProgressRouteId
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -211,41 +214,6 @@ namespace TransitTrackerWebApi.Migrations
                     b.ToTable("users", (string)null);
                 });
 
-            modelBuilder.Entity("TransitTrackerWebApi.Models.UserAchievement", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<string>("AchievementId")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
-                        .HasColumnName("achievement_id");
-
-                    b.Property<int?>("ProgressAtUnlock")
-                        .HasColumnType("integer")
-                        .HasColumnName("progress_at_unlock");
-
-                    b.Property<DateTime>("UnlockedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("unlocked_at");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("user_id");
-
-                    b.HasKey("Id")
-                        .HasName("pk_user_achievements");
-
-                    b.HasIndex("UserId", "AchievementId")
-                        .IsUnique()
-                        .HasDatabaseName("ix_user_achievements_user_id_achievement_id");
-
-                    b.ToTable("user_achievements", (string)null);
-                });
-
             modelBuilder.Entity("TransitTrackerWebApi.Models.UserAuthProvider", b =>
                 {
                     b.Property<Guid>("Id")
@@ -324,18 +292,6 @@ namespace TransitTrackerWebApi.Migrations
                         .HasConstraintName("fk_routes_agencies_agency_id");
 
                     b.Navigation("Agency");
-                });
-
-            modelBuilder.Entity("TransitTrackerWebApi.Models.UserAchievement", b =>
-                {
-                    b.HasOne("TransitTrackerWebApi.Models.User", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_user_achievements_users_user_id");
-
-                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("TransitTrackerWebApi.Models.UserAuthProvider", b =>

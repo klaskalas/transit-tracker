@@ -23,3 +23,18 @@ public record AuthUserResponse(
     string Email,
     string? DisplayName
 );
+
+public record RouteVisitResponse(
+    int RouteId,
+    bool Completed,
+    DateTime? CompletedDate
+);
+
+public record UserAchievementDto(
+    string AchievementId,
+    DateTime UnlockedAt
+);
+
+public record UnlockAchievementsRequest(
+    List<string> AchievementIds
+);

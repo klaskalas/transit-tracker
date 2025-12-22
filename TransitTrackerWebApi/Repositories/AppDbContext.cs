@@ -14,6 +14,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<UserRouteProgress> UserRouteProgress => Set<UserRouteProgress>();
     public DbSet<User> Users => Set<User>();
     public DbSet<UserAuthProvider> UserAuthProviders => Set<UserAuthProvider>();
+    public DbSet<UserAchievement> UserAchievements => Set<UserAchievement>();
     
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -32,6 +33,26 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .HasIndex(provider => new { provider.UserId, provider.Provider })
             .IsUnique();
 
-        // TODO: Fix Route/UserRouteProgress relationship mapping to remove EF shadow FK RouteId1 warning.
+        modelBuilder.Entity<UserAchievement>()
+            .HasIndex(achievement => new { achievement.UserId, achievement.AchievementId })
+            .IsUnique();
+
+        modelBuilder.Entity<UserRouteProgress>()
+            .HasOne(progress => progress.Route)
+            .WithMany()
+            .HasForeignKey(progress => progress.RouteId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<UserRouteProgress>()
+            .HasOne(progress => progress.User)
+            .WithMany()
+            .HasForeignKey(progress => progress.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<UserAchievement>()
+            .HasOne(achievement => achievement.User)
+            .WithMany()
+            .HasForeignKey(achievement => achievement.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

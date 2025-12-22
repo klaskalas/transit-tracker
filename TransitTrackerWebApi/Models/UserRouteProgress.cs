@@ -7,7 +7,7 @@ public class UserRouteProgress
     [Key]
     public Guid Id { get; set; }
 
-    public Guid RouteId { get; set; }
+    public int RouteId { get; set; }
     public Guid UserId { get; set; }
 
     public DateTime CompletedAt { get; set; }

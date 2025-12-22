@@ -1,6 +1,9 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TransitTrackerWebApi.Models;
+using TransitTrackerWebApi.Models.Dtos;
 using TransitTrackerWebApi.Repositories;
 using TransitTrackerWebApi.Services;
 
@@ -21,21 +24,72 @@ public class RoutesController(AppDbContext db, IRoutesService routesService) : C
         return Ok(route);
     }
 
-    [HttpPost("{id:guid}/complete")]
-    public async Task<IActionResult> MarkCompleted(Guid id, [FromQuery] Guid userId)
+    [Authorize]
+    [HttpGet("with-progress")]
+    public async Task<ActionResult<IEnumerable<TransitLineProgressDto>>> GetRoutesWithProgress()
     {
-        var already = await db.UserRouteProgress
-            .AnyAsync(p => p.RouteId == id && p.UserId == userId);
+        var userId = GetUserId();
+        var routes = await routesService.GetAllRoutesAsync();
+        var progress = await db.UserRouteProgress
+            .Where(entry => entry.UserId == userId)
+            .ToListAsync();
 
-        if (already) return Ok();
-        
-        db.UserRouteProgress.Add(new UserRouteProgress {
-            RouteId = id,
-            UserId = userId,
-            CompletedAt = DateTime.UtcNow
+        var progressMap = progress.ToDictionary(entry => entry.RouteId);
+
+        var result = routes.Select(route =>
+        {
+            progressMap.TryGetValue(route.Id, out var entry);
+            return new TransitLineProgressDto
+            {
+                Id = route.Id,
+                Agency = route.Agency,
+                GtfsRouteId = route.GtfsRouteId,
+                ShortName = route.ShortName,
+                LongName = route.LongName,
+                RouteType = route.RouteType,
+                Color = route.Color,
+                TextColor = route.TextColor,
+                Completed = entry is not null,
+                CompletedDate = entry?.CompletedAt
+            };
         });
-        await db.SaveChangesAsync();
 
-        return Ok();
+        return Ok(result);
+    }
+
+    [Authorize]
+    [HttpPost("{id:int}/visited")]
+    public async Task<ActionResult<RouteVisitResponse>> ToggleVisited(int id)
+    {
+        var userId = GetUserId();
+        var existing = await db.UserRouteProgress
+            .FirstOrDefaultAsync(entry => entry.RouteId == id && entry.UserId == userId);
+
+        if (existing is null)
+        {
+            var progress = new UserRouteProgress
+            {
+                RouteId = id,
+                UserId = userId,
+                CompletedAt = DateTime.UtcNow
+            };
+            db.UserRouteProgress.Add(progress);
+            await db.SaveChangesAsync();
+            return Ok(new RouteVisitResponse(id, true, progress.CompletedAt));
+        }
+
+        db.UserRouteProgress.Remove(existing);
+        await db.SaveChangesAsync();
+        return Ok(new RouteVisitResponse(id, false, null));
+    }
+
+    private Guid GetUserId()
+    {
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        if (string.IsNullOrWhiteSpace(sub) || !Guid.TryParse(sub, out var userId))
+        {
+            throw new InvalidOperationException("User id claim is missing.");
+        }
+        return userId;
     }
 }
