@@ -17,6 +17,9 @@ public class TransitLineProgressDto
 {
     public int Id { get; set; }
     public Models.Agency? Agency { get; set; }
+    public int FeedId { get; set; }
+    public int FeedScope { get; set; }
+    public int? ScopeOverride { get; set; }
     public string? GtfsRouteId { get; set; }
     public string? ShortName { get; set; }
     public string? LongName { get; set; }

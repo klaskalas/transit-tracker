@@ -98,3 +98,11 @@ public enum GtfsRouteType
   HorseDrawnCarriage = 1702
 
 }
+
+public enum DataScope
+{
+  Unknown = 0,
+  Regional = 1,
+  National = 2,
+  International = 3
+}

@@ -43,6 +43,9 @@ public class RoutesController(AppDbContext db, IRoutesService routesService) : C
             {
                 Id = route.Id,
                 Agency = route.Agency,
+                FeedId = route.FeedId,
+                FeedScope = (int)(route.Feed?.Scope ?? DataScope.Unknown),
+                ScopeOverride = route.ScopeOverride is null ? null : (int)route.ScopeOverride,
                 GtfsRouteId = route.GtfsRouteId,
                 ShortName = route.ShortName,
                 LongName = route.LongName,

@@ -11,6 +11,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ShapeLine> ShapeLines => Set<ShapeLine>();
     public DbSet<Shape> Shapes => Set<Shape>();
     public DbSet<RouteShape> RouteShapes => Set<RouteShape>();
+    public DbSet<Region> Regions => Set<Region>();
+    public DbSet<Feed> Feeds => Set<Feed>();
     public DbSet<UserRouteProgress> UserRouteProgress => Set<UserRouteProgress>();
     public DbSet<User> Users => Set<User>();
     public DbSet<UserAuthProvider> UserAuthProviders => Set<UserAuthProvider>();
@@ -20,6 +22,29 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     {
         modelBuilder.Entity<RouteShape>()
             .HasKey(rs => new { rs.RouteId, rs.GtfsShapeId });
+
+        modelBuilder.Entity<Region>()
+            .HasIndex(region => new { region.CountryCode, region.Name })
+            .IsUnique();
+
+        modelBuilder.Entity<Feed>()
+            .HasIndex(feed => new { feed.RegionId, feed.Name })
+            .IsUnique();
+
+        modelBuilder.Entity<Route>()
+            .HasIndex(route => route.FeedId);
+
+        modelBuilder.Entity<Feed>()
+            .HasOne(feed => feed.Region)
+            .WithMany(region => region.Feeds)
+            .HasForeignKey(feed => feed.RegionId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<Route>()
+            .HasOne(route => route.Feed)
+            .WithMany(feed => feed.Routes)
+            .HasForeignKey(route => route.FeedId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         modelBuilder.Entity<User>()
             .HasIndex(user => user.Email)

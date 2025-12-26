@@ -11,6 +11,7 @@ public class RoutesRepository(AppDbContext context)
     {
         return await context.Routes
             .Include(a => a.Agency)
+            .Include(r => r.Feed)
             .Take(25)
             .ToListAsync();
     }

@@ -18,6 +18,13 @@ public class Route
     public Agency? Agency { get; set; }
 
     [Required]
+    [ForeignKey("Feed")]
+    [Column("feed_id")]
+    public int FeedId { get; set; }
+
+    public Feed? Feed { get; set; }
+
+    [Required]
     [Column("gtfs_route_id")]
     public string GtfsRouteId { get; set; } = null!;
 
@@ -35,4 +42,10 @@ public class Route
 
     [Column("text_color")]
     public string? TextColor { get; set; }
+
+    [Column("scope_override")]
+    public DataScope? ScopeOverride { get; set; }
+
+    [Column("is_active")]
+    public bool IsActive { get; set; } = true;
 }
