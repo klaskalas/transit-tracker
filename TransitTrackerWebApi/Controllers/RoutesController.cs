@@ -52,6 +52,7 @@ public class RoutesController(AppDbContext db, IRoutesService routesService) : C
                 RouteType = route.RouteType,
                 Color = route.Color,
                 TextColor = route.TextColor,
+                StopCount = route.StopCount,
                 Completed = entry is not null,
                 CompletedDate = entry?.CompletedAt
             };

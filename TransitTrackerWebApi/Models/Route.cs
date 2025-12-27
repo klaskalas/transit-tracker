@@ -43,6 +43,9 @@ public class Route
     [Column("text_color")]
     public string? TextColor { get; set; }
 
+    [Column("stop_count")]
+    public int? StopCount { get; set; }
+
     [Column("scope_override")]
     public DataScope? ScopeOverride { get; set; }
 

@@ -11,6 +11,7 @@ public class TransitLineDto
     public int RouteType { get; set; }
     public string? Color { get; set; }
     public string? TextColor { get; set; }
+    public int? StopCount { get; set; }
 }
 
 public class TransitLineProgressDto
@@ -26,6 +27,7 @@ public class TransitLineProgressDto
     public int RouteType { get; set; }
     public string? Color { get; set; }
     public string? TextColor { get; set; }
+    public int? StopCount { get; set; }
     public bool Completed { get; set; }
     public DateTime? CompletedDate { get; set; }
 }

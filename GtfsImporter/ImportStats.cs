@@ -11,6 +11,8 @@ internal sealed class ImportStats
     public int RoutesDeleted { get; set; }
     public int ShapesInserted { get; set; }
     public int TripsInserted { get; set; }
+    public int StopTimesInserted { get; set; }
+    public int RoutesWithStopsUpdated { get; set; }
     public int ShapeLinesInserted { get; set; }
     public int RouteShapesInserted { get; set; }
 }

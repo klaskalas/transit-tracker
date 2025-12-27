@@ -21,6 +21,7 @@ string scopeArg = GetArg(args, "scope") ?? "regional";
 string replaceMode = (GetArg(args, "replace-mode") ?? "archive").ToLowerInvariant();
 string updateMode = (GetArg(args, "update-mode") ?? "full").ToLowerInvariant();
 bool dryRun = ParseBool(GetArg(args, "dry-run"));
+int commandTimeoutSeconds = ParseInt(GetArg(args, "command-timeout"), 120);
 
 var feedScope = ParseScope(scopeArg);
 
@@ -28,6 +29,10 @@ await using var conn = new NpgsqlConnection(connectionString);
 await conn.OpenAsync();
 
 await using var tx = await conn.BeginTransactionAsync();
+await using (var timeoutCmd = new NpgsqlCommand($"SET statement_timeout = {commandTimeoutSeconds * 1000};", conn, tx))
+{
+    await timeoutCmd.ExecuteNonQueryAsync();
+}
 var stats = new ImportStats();
 
 var regionId = await GetOrCreateRegion(conn, tx, regionIdArg, regionName, countryCode, feedScope, stats);
@@ -60,12 +65,15 @@ stats.RoutesUpdated = routeStats.Updated;
 
 var routesNew = await LoadRoutesNew(conn, tx, updateMode);
 stats.TripsInserted = await ImportTrips(conn, tx, gtfsDir, tripsTotal, routesNew);
+stats.StopTimesInserted = await ImportStopTimes(conn, tx, gtfsDir, routesNew);
 var shapesFilter = updateMode == "routes" ? await LoadShapesFilter(conn, tx) : null;
 stats.ShapesInserted = await ImportShapes(conn, tx, gtfsDir, shapesTotal, updateMode, shapesFilter);
 
 var shapeStats = await RefreshRouteShapes(conn, tx, feedId, updateMode);
 stats.ShapeLinesInserted = shapeStats.ShapeLinesInserted;
 stats.RouteShapesInserted = shapeStats.RouteShapesInserted;
+
+stats.RoutesWithStopsUpdated = await UpdateStopCounts(conn, tx, feedId);
 
 var replaceStats = await ApplyReplaceMode(conn, tx, feedId, replaceMode);
 stats.RoutesArchived = replaceStats.Archived;
@@ -106,6 +114,16 @@ static int ParseScope(string scope)
         "international" => 3,
         _ => 0
     };
+}
+
+static int ParseInt(string? value, int defaultValue)
+{
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return defaultValue;
+    }
+
+    return int.TryParse(value, out var parsed) ? parsed : defaultValue;
 }
 
 static bool ParseBool(string? value)
@@ -264,8 +282,13 @@ static async Task EnsureStagingTables(NpgsqlConnection conn, NpgsqlTransaction t
             lon DOUBLE PRECISION
         );
         CREATE TEMP TABLE IF NOT EXISTS trips_staging (
+            trip_id TEXT,
             route_id TEXT,
             shape_id TEXT
+        );
+        CREATE TEMP TABLE IF NOT EXISTS stop_times_staging (
+            trip_id TEXT,
+            stop_id TEXT
         );";
 
     await using (var cmd = new NpgsqlCommand(sql, conn, tx))
@@ -273,7 +296,7 @@ static async Task EnsureStagingTables(NpgsqlConnection conn, NpgsqlTransaction t
         await cmd.ExecuteNonQueryAsync();
     }
 
-    await using (var cmd = new NpgsqlCommand("TRUNCATE routes_staging, routes_new, shapes_staging, shapes_new, shapes_import, trips_staging;", conn, tx))
+    await using (var cmd = new NpgsqlCommand("TRUNCATE routes_staging, routes_new, shapes_staging, shapes_new, shapes_import, trips_staging, stop_times_staging;", conn, tx))
     {
         await cmd.ExecuteNonQueryAsync();
     }
@@ -465,6 +488,12 @@ static async Task<int> ImportShapes(
     var processed = 0;
     var timer = System.Diagnostics.Stopwatch.StartNew();
     var lastLog = TimeSpan.Zero;
+    var shapeIds = new HashSet<string>(StringComparer.Ordinal);
+    const int batchSize = 1000;
+    var shapeIdBatch = new List<string>(batchSize);
+    var sequenceBatch = new List<int>(batchSize);
+    var latBatch = new List<double>(batchSize);
+    var lonBatch = new List<double>(batchSize);
     UpdateProgress("Importing shapes", processed, totalRecords, timer, ref lastLog);
 
     using var reader = new StreamReader(Path.Combine(gtfsDir, "shapes.txt"));
@@ -498,31 +527,29 @@ static async Task<int> ImportShapes(
         var lon = double.Parse(lonRaw, CultureInfo.InvariantCulture);
         var sequence = int.Parse(seqRaw, CultureInfo.InvariantCulture);
 
-        const string stagingSql = @"INSERT INTO shapes_staging (gtfs_shape_id) VALUES (@id) ON CONFLICT DO NOTHING;";
-        await using (var stagingCmd = new NpgsqlCommand(stagingSql, conn, tx))
+        shapeIdBatch.Add(shapeId);
+        sequenceBatch.Add(sequence);
+        latBatch.Add(lat);
+        lonBatch.Add(lon);
+        if (shapeIdBatch.Count >= batchSize)
         {
-            stagingCmd.Parameters.AddWithValue("id", shapeId);
-            await stagingCmd.ExecuteNonQueryAsync();
+            await InsertShapesImportBatch(conn, tx, shapeIdBatch, sequenceBatch, latBatch, lonBatch);
+            shapeIdBatch.Clear();
+            sequenceBatch.Clear();
+            latBatch.Clear();
+            lonBatch.Clear();
         }
 
-        const string importSql = @"
-            INSERT INTO shapes_import (gtfs_shape_id, sequence, lat, lon)
-            VALUES (@id, @seq, @lat, @lon);";
-        await using var importCmd = new NpgsqlCommand(importSql, conn, tx);
-        importCmd.Parameters.AddWithValue("id", shapeId);
-        importCmd.Parameters.AddWithValue("seq", sequence);
-        importCmd.Parameters.AddWithValue("lat", lat);
-        importCmd.Parameters.AddWithValue("lon", lon);
-        await importCmd.ExecuteNonQueryAsync();
-
-        const string newSql = @"INSERT INTO shapes_new (gtfs_shape_id) VALUES (@id) ON CONFLICT DO NOTHING;";
-        await using (var newCmd = new NpgsqlCommand(newSql, conn, tx))
-        {
-            newCmd.Parameters.AddWithValue("id", shapeId);
-            await newCmd.ExecuteNonQueryAsync();
-        }
+        shapeIds.Add(shapeId);
         inserted++;
     }
+
+    if (shapeIdBatch.Count > 0)
+    {
+        await InsertShapesImportBatch(conn, tx, shapeIdBatch, sequenceBatch, latBatch, lonBatch);
+    }
+    await BulkInsertShapeIds(conn, tx, "shapes_staging", shapeIds);
+    await BulkInsertShapeIds(conn, tx, "shapes_new", shapeIds);
 
     if (updateMode != "routes")
     {
@@ -532,6 +559,7 @@ static async Task<int> ImportShapes(
             DELETE FROM shapes WHERE gtfs_shape_id IN (SELECT gtfs_shape_id FROM shapes_staging);";
         await using (var cleanupCmd = new NpgsqlCommand(cleanupSql, conn, tx))
         {
+            cleanupCmd.CommandTimeout = 0;
             await cleanupCmd.ExecuteNonQueryAsync();
         }
     }
@@ -541,6 +569,7 @@ static async Task<int> ImportShapes(
         WHERE gtfs_shape_id IN (SELECT gtfs_shape_id FROM shapes);";
     await using (var removeCmd = new NpgsqlCommand(removeExistingNewSql, conn, tx))
     {
+        removeCmd.CommandTimeout = 0;
         await removeCmd.ExecuteNonQueryAsync();
     }
 
@@ -554,11 +583,79 @@ static async Task<int> ImportShapes(
         WHERE gtfs_shape_id IN (SELECT gtfs_shape_id FROM shapes_new);";
     await using (var insertCmd = new NpgsqlCommand(insertSql, conn, tx))
     {
+        insertCmd.CommandTimeout = 0;
         await insertCmd.ExecuteNonQueryAsync();
     }
 
     UpdateProgress("Importing shapes", totalRecords, totalRecords, timer, ref lastLog, true);
     return inserted;
+}
+
+static async Task BulkInsertShapeIds(
+    NpgsqlConnection conn,
+    NpgsqlTransaction tx,
+    string tableName,
+    IReadOnlyCollection<string> shapeIds)
+{
+    if (shapeIds.Count == 0)
+    {
+        return;
+    }
+
+    Console.WriteLine($"Writing {shapeIds.Count} shape ids to {tableName}...");
+
+    const int batchSize = 1000;
+    var batch = new List<string>(batchSize);
+    foreach (var shapeId in shapeIds)
+    {
+        batch.Add(shapeId);
+        if (batch.Count < batchSize)
+        {
+            continue;
+        }
+
+        await InsertShapeIdBatch(conn, tx, tableName, batch);
+        batch.Clear();
+    }
+
+    if (batch.Count > 0)
+    {
+        await InsertShapeIdBatch(conn, tx, tableName, batch);
+    }
+
+    Console.WriteLine($"Finished writing shape ids to {tableName}.");
+}
+
+static async Task InsertShapeIdBatch(
+    NpgsqlConnection conn,
+    NpgsqlTransaction tx,
+    string tableName,
+    List<string> batch)
+{
+    var sql = $"INSERT INTO {tableName} (gtfs_shape_id) SELECT unnest(@ids) ON CONFLICT DO NOTHING;";
+    await using var cmd = new NpgsqlCommand(sql, conn, tx);
+    cmd.Parameters.AddWithValue("ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text, batch.ToArray());
+    await cmd.ExecuteNonQueryAsync();
+}
+
+static async Task InsertShapesImportBatch(
+    NpgsqlConnection conn,
+    NpgsqlTransaction tx,
+    List<string> shapeIds,
+    List<int> sequences,
+    List<double> lats,
+    List<double> lons)
+{
+    const string sql = @"
+        INSERT INTO shapes_import (gtfs_shape_id, sequence, lat, lon)
+        SELECT *
+        FROM unnest(@shapeIds, @sequences, @lats, @lons);";
+    await using var cmd = new NpgsqlCommand(sql, conn, tx);
+    cmd.Parameters.AddWithValue("shapeIds", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text, shapeIds.ToArray());
+    cmd.Parameters.AddWithValue("sequences", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Integer, sequences.ToArray());
+    cmd.Parameters.AddWithValue("lats", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Double, lats.ToArray());
+    cmd.Parameters.AddWithValue("lons", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Double, lons.ToArray());
+    await cmd.ExecuteNonQueryAsync();
 }
 
 static async Task<int> ImportTrips(
@@ -583,10 +680,11 @@ static async Task<int> ImportTrips(
         UpdateProgress("Importing trips", processed, totalRecords, timer, ref lastLog);
 
         var row = (IDictionary<string, object>)record;
+        var tripId = GetField(row, "trip_id");
         var routeId = GetField(row, "route_id");
         var shapeId = GetField(row, "shape_id");
 
-        if (string.IsNullOrWhiteSpace(routeId) || string.IsNullOrWhiteSpace(shapeId))
+        if (string.IsNullOrWhiteSpace(tripId) || string.IsNullOrWhiteSpace(routeId) || string.IsNullOrWhiteSpace(shapeId))
         {
             continue;
         }
@@ -597,9 +695,10 @@ static async Task<int> ImportTrips(
         }
 
         const string insertSql = @"
-            INSERT INTO trips_staging (route_id, shape_id)
-            VALUES (@routeId, @shapeId);";
+            INSERT INTO trips_staging (trip_id, route_id, shape_id)
+            VALUES (@tripId, @routeId, @shapeId);";
         await using var insertCmd = new NpgsqlCommand(insertSql, conn, tx);
+        insertCmd.Parameters.AddWithValue("tripId", tripId);
         insertCmd.Parameters.AddWithValue("routeId", routeId);
         insertCmd.Parameters.AddWithValue("shapeId", shapeId);
         await insertCmd.ExecuteNonQueryAsync();
@@ -607,6 +706,51 @@ static async Task<int> ImportTrips(
     }
 
     UpdateProgress("Importing trips", totalRecords, totalRecords, timer, ref lastLog, true);
+    return inserted;
+}
+
+static async Task<int> ImportStopTimes(
+    NpgsqlConnection conn,
+    NpgsqlTransaction tx,
+    string gtfsDir,
+    HashSet<string>? routesFilter)
+{
+    var inserted = 0;
+    using var reader = new StreamReader(Path.Combine(gtfsDir, "stop_times.txt"));
+    using var csv = new CsvReader(reader, CreateCsvConfig());
+    await using var importer = conn.BeginBinaryImport(
+        "COPY stop_times_staging (trip_id, stop_id) FROM STDIN (FORMAT BINARY)");
+
+    foreach (var record in csv.GetRecords<dynamic>())
+    {
+        var row = (IDictionary<string, object>)record;
+        var tripId = GetField(row, "trip_id");
+        var stopId = GetField(row, "stop_id");
+
+        if (string.IsNullOrWhiteSpace(tripId) || string.IsNullOrWhiteSpace(stopId))
+        {
+            continue;
+        }
+
+        if (routesFilter is not null)
+        {
+            const string existsSql = @"SELECT 1 FROM trips_staging WHERE trip_id = @tripId LIMIT 1;";
+            await using var existsCmd = new NpgsqlCommand(existsSql, conn, tx);
+            existsCmd.Parameters.AddWithValue("tripId", tripId);
+            var exists = await existsCmd.ExecuteScalarAsync();
+            if (exists is null)
+            {
+                continue;
+            }
+        }
+
+        importer.StartRow();
+        importer.Write(tripId, NpgsqlTypes.NpgsqlDbType.Text);
+        importer.Write(stopId, NpgsqlTypes.NpgsqlDbType.Text);
+        inserted++;
+    }
+
+    await importer.CompleteAsync();
     return inserted;
 }
 
@@ -649,6 +793,7 @@ static async Task<(int ShapeLinesInserted, int RouteShapesInserted)> RefreshRout
     int shapeLinesInserted;
     await using (var shapeLineCmd = new NpgsqlCommand(shapeLineSql, conn, tx))
     {
+        shapeLineCmd.CommandTimeout = 0;
         shapeLinesInserted = await shapeLineCmd.ExecuteNonQueryAsync();
     }
 
@@ -675,6 +820,7 @@ static async Task<(int ShapeLinesInserted, int RouteShapesInserted)> RefreshRout
     await using (var cmd = new NpgsqlCommand(routeShapeSql, conn, tx))
     {
         cmd.Parameters.AddWithValue("feedId", feedId);
+        cmd.CommandTimeout = 0;
         routeShapesInserted = await cmd.ExecuteNonQueryAsync();
     }
 
@@ -761,6 +907,8 @@ static void PrintSummary(ImportStats stats, string replaceMode, bool dryRun)
     Console.WriteLine($"Routes updated: {stats.RoutesUpdated}");
     Console.WriteLine($"Shapes inserted: {stats.ShapesInserted}");
     Console.WriteLine($"Trips inserted: {stats.TripsInserted}");
+    Console.WriteLine($"Stop times inserted: {stats.StopTimesInserted}");
+    Console.WriteLine($"Routes updated with stops: {stats.RoutesWithStopsUpdated}");
     Console.WriteLine($"Shape lines inserted: {stats.ShapeLinesInserted}");
     Console.WriteLine($"Route shapes inserted: {stats.RouteShapesInserted}");
     if (replaceMode == "archive")
@@ -775,6 +923,26 @@ static void PrintSummary(ImportStats stats, string replaceMode, bool dryRun)
     {
         Console.WriteLine("Routes archived/deleted: 0 (replace-mode=keep)");
     }
+}
+
+static async Task<int> UpdateStopCounts(NpgsqlConnection conn, NpgsqlTransaction tx, int feedId)
+{
+    const string sql = @"
+        WITH route_counts AS (
+            SELECT t.route_id, COUNT(DISTINCT st.stop_id) AS stop_count
+            FROM trips_staging t
+            JOIN stop_times_staging st ON st.trip_id = t.trip_id
+            GROUP BY t.route_id
+        )
+        UPDATE routes r
+        SET stop_count = rc.stop_count
+        FROM route_counts rc
+        WHERE r.feed_id = @feedId
+          AND r.gtfs_route_id = rc.route_id;";
+
+    await using var cmd = new NpgsqlCommand(sql, conn, tx);
+    cmd.Parameters.AddWithValue("feedId", feedId);
+    return await cmd.ExecuteNonQueryAsync();
 }
 
 static int CountDataRows(string filePath)
