@@ -46,6 +46,9 @@ public class Route
     [Column("stop_count")]
     public int? StopCount { get; set; }
 
+    [Column("longest_trip_length_m")]
+    public double? LongestTripLengthMeters { get; set; }
+
     [Column("scope_override")]
     public DataScope? ScopeOverride { get; set; }
 

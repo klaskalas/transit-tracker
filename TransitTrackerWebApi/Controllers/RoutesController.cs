@@ -14,8 +14,8 @@ namespace TransitTrackerWebApi.Controllers;
 public class RoutesController(AppDbContext db, IRoutesService routesService) : ControllerBase
 {
     [HttpGet]
-    public async Task<IActionResult> GetAllRoutes() =>
-        Ok(await routesService.GetAllRoutesAsync());
+    public async Task<IActionResult> GetAllRoutes([FromQuery] int offset = 0, [FromQuery] int limit = 25) =>
+        Ok(await routesService.GetAllRoutesAsync(offset, limit));
 
     [HttpGet("{id:int}/shape")]
     public async Task<IActionResult> GetShapes(int id)
@@ -26,10 +26,12 @@ public class RoutesController(AppDbContext db, IRoutesService routesService) : C
 
     [Authorize]
     [HttpGet("with-progress")]
-    public async Task<ActionResult<IEnumerable<TransitLineProgressDto>>> GetRoutesWithProgress()
+    public async Task<ActionResult<IEnumerable<TransitLineProgressDto>>> GetRoutesWithProgress(
+        [FromQuery] int offset = 0,
+        [FromQuery] int limit = 25)
     {
         var userId = GetUserId();
-        var routes = await routesService.GetAllRoutesAsync();
+        var routes = await routesService.GetAllRoutesAsync(offset, limit);
         var progress = await db.UserRouteProgress
             .Where(entry => entry.UserId == userId)
             .ToListAsync();
@@ -53,6 +55,7 @@ public class RoutesController(AppDbContext db, IRoutesService routesService) : C
                 Color = route.Color,
                 TextColor = route.TextColor,
                 StopCount = route.StopCount,
+                LongestTripLengthMeters = route.LongestTripLengthMeters,
                 Completed = entry is not null,
                 CompletedDate = entry?.CompletedAt
             };

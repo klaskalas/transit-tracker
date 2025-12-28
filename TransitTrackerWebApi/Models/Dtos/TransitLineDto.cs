@@ -12,6 +12,7 @@ public class TransitLineDto
     public string? Color { get; set; }
     public string? TextColor { get; set; }
     public int? StopCount { get; set; }
+    public double? LongestTripLengthMeters { get; set; }
 }
 
 public class TransitLineProgressDto
@@ -28,6 +29,7 @@ public class TransitLineProgressDto
     public string? Color { get; set; }
     public string? TextColor { get; set; }
     public int? StopCount { get; set; }
+    public double? LongestTripLengthMeters { get; set; }
     public bool Completed { get; set; }
     public DateTime? CompletedDate { get; set; }
 }

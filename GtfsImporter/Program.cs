@@ -66,6 +66,7 @@ stats.RoutesUpdated = routeStats.Updated;
 var routesNew = await LoadRoutesNew(conn, tx, updateMode);
 stats.TripsInserted = await ImportTrips(conn, tx, gtfsDir, tripsTotal, routesNew);
 stats.StopTimesInserted = await ImportStopTimes(conn, tx, gtfsDir, routesNew);
+await ImportStops(conn, tx, gtfsDir);
 var shapesFilter = updateMode == "routes" ? await LoadShapesFilter(conn, tx) : null;
 stats.ShapesInserted = await ImportShapes(conn, tx, gtfsDir, shapesTotal, updateMode, shapesFilter);
 
@@ -74,6 +75,7 @@ stats.ShapeLinesInserted = shapeStats.ShapeLinesInserted;
 stats.RouteShapesInserted = shapeStats.RouteShapesInserted;
 
 stats.RoutesWithStopsUpdated = await UpdateStopCounts(conn, tx, feedId);
+await UpdateRouteLongestTripLengths(conn, tx, feedId, updateMode);
 
 var replaceStats = await ApplyReplaceMode(conn, tx, feedId, replaceMode);
 stats.RoutesArchived = replaceStats.Archived;
@@ -289,6 +291,10 @@ static async Task EnsureStagingTables(NpgsqlConnection conn, NpgsqlTransaction t
         CREATE TEMP TABLE IF NOT EXISTS stop_times_staging (
             trip_id TEXT,
             stop_id TEXT
+        );
+        CREATE TEMP TABLE IF NOT EXISTS stops_staging (
+            stop_id TEXT PRIMARY KEY,
+            parent_station TEXT
         );";
 
     await using (var cmd = new NpgsqlCommand(sql, conn, tx))
@@ -296,7 +302,7 @@ static async Task EnsureStagingTables(NpgsqlConnection conn, NpgsqlTransaction t
         await cmd.ExecuteNonQueryAsync();
     }
 
-    await using (var cmd = new NpgsqlCommand("TRUNCATE routes_staging, routes_new, shapes_staging, shapes_new, shapes_import, trips_staging, stop_times_staging;", conn, tx))
+    await using (var cmd = new NpgsqlCommand("TRUNCATE routes_staging, routes_new, shapes_staging, shapes_new, shapes_import, trips_staging, stop_times_staging, stops_staging;", conn, tx))
     {
         await cmd.ExecuteNonQueryAsync();
     }
@@ -718,8 +724,9 @@ static async Task<int> ImportStopTimes(
     var inserted = 0;
     using var reader = new StreamReader(Path.Combine(gtfsDir, "stop_times.txt"));
     using var csv = new CsvReader(reader, CreateCsvConfig());
-    await using var importer = conn.BeginBinaryImport(
-        "COPY stop_times_staging (trip_id, stop_id) FROM STDIN (FORMAT BINARY)");
+    const int batchSize = 1000;
+    var tripBatch = new List<string>(batchSize);
+    var stopBatch = new List<string>(batchSize);
 
     foreach (var record in csv.GetRecords<dynamic>())
     {
@@ -744,14 +751,109 @@ static async Task<int> ImportStopTimes(
             }
         }
 
-        importer.StartRow();
-        importer.Write(tripId, NpgsqlTypes.NpgsqlDbType.Text);
-        importer.Write(stopId, NpgsqlTypes.NpgsqlDbType.Text);
+        tripBatch.Add(tripId);
+        stopBatch.Add(stopId);
+        if (tripBatch.Count >= batchSize)
+        {
+            await InsertStopTimesBatch(conn, tx, tripBatch, stopBatch);
+            tripBatch.Clear();
+            stopBatch.Clear();
+        }
         inserted++;
     }
 
-    await importer.CompleteAsync();
+    if (tripBatch.Count > 0)
+    {
+        await InsertStopTimesBatch(conn, tx, tripBatch, stopBatch);
+    }
     return inserted;
+}
+
+static async Task InsertStopTimesBatch(
+    NpgsqlConnection conn,
+    NpgsqlTransaction tx,
+    List<string> tripIds,
+    List<string> stopIds)
+{
+    const string sql = @"
+        INSERT INTO stop_times_staging (trip_id, stop_id)
+        SELECT *
+        FROM unnest(@tripIds, @stopIds);";
+    await using var cmd = new NpgsqlCommand(sql, conn, tx);
+    cmd.Parameters.AddWithValue("tripIds", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text, tripIds.ToArray());
+    cmd.Parameters.AddWithValue("stopIds", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text, stopIds.ToArray());
+    await cmd.ExecuteNonQueryAsync();
+}
+
+static async Task<int> ImportStops(
+    NpgsqlConnection conn,
+    NpgsqlTransaction tx,
+    string gtfsDir)
+{
+    var stopsPath = Path.Combine(gtfsDir, "stops.txt");
+    if (!File.Exists(stopsPath))
+    {
+        return 0;
+    }
+
+    var inserted = 0;
+    const int batchSize = 1000;
+    var stopIdBatch = new List<string>(batchSize);
+    var parentBatch = new List<string?>(batchSize);
+
+    using var reader = new StreamReader(stopsPath);
+    using var csv = new CsvReader(reader, CreateCsvConfig());
+
+    foreach (var record in csv.GetRecords<dynamic>())
+    {
+        var row = (IDictionary<string, object>)record;
+        var stopId = GetField(row, "stop_id");
+        if (string.IsNullOrWhiteSpace(stopId))
+        {
+            continue;
+        }
+
+        var parentStation = GetField(row, "parent_station");
+        if (string.IsNullOrWhiteSpace(parentStation))
+        {
+            parentStation = null;
+        }
+
+        stopIdBatch.Add(stopId);
+        parentBatch.Add(parentStation);
+        inserted++;
+
+        if (stopIdBatch.Count >= batchSize)
+        {
+            await InsertStopsBatch(conn, tx, stopIdBatch, parentBatch);
+            stopIdBatch.Clear();
+            parentBatch.Clear();
+        }
+    }
+
+    if (stopIdBatch.Count > 0)
+    {
+        await InsertStopsBatch(conn, tx, stopIdBatch, parentBatch);
+    }
+
+    return inserted;
+}
+
+static async Task InsertStopsBatch(
+    NpgsqlConnection conn,
+    NpgsqlTransaction tx,
+    List<string> stopIds,
+    List<string?> parentStations)
+{
+    const string sql = @"
+        INSERT INTO stops_staging (stop_id, parent_station)
+        SELECT *
+        FROM unnest(@stopIds, @parentStations)
+        ON CONFLICT (stop_id) DO NOTHING;";
+    await using var cmd = new NpgsqlCommand(sql, conn, tx);
+    cmd.Parameters.AddWithValue("stopIds", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text, stopIds.ToArray());
+    cmd.Parameters.AddWithValue("parentStations", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text, parentStations.ToArray());
+    await cmd.ExecuteNonQueryAsync();
 }
 
 static async Task<(int ShapeLinesInserted, int RouteShapesInserted)> RefreshRouteShapes(
@@ -929,9 +1031,11 @@ static async Task<int> UpdateStopCounts(NpgsqlConnection conn, NpgsqlTransaction
 {
     const string sql = @"
         WITH route_counts AS (
-            SELECT t.route_id, COUNT(DISTINCT st.stop_id) AS stop_count
+            SELECT t.route_id,
+                   COUNT(DISTINCT COALESCE(s.parent_station, st.stop_id)) AS stop_count
             FROM trips_staging t
             JOIN stop_times_staging st ON st.trip_id = t.trip_id
+            LEFT JOIN stops_staging s ON s.stop_id = st.stop_id
             GROUP BY t.route_id
         )
         UPDATE routes r
@@ -943,6 +1047,56 @@ static async Task<int> UpdateStopCounts(NpgsqlConnection conn, NpgsqlTransaction
     await using var cmd = new NpgsqlCommand(sql, conn, tx);
     cmd.Parameters.AddWithValue("feedId", feedId);
     return await cmd.ExecuteNonQueryAsync();
+}
+
+static async Task<int> UpdateRouteLongestTripLengths(
+    NpgsqlConnection conn,
+    NpgsqlTransaction tx,
+    int feedId,
+    string updateMode)
+{
+    var scopeFilter = updateMode == "routes"
+        ? " AND r.gtfs_route_id IN (SELECT gtfs_route_id FROM routes_new)"
+        : string.Empty;
+
+    var updateSql = $@"
+        WITH shape_lengths AS (
+            SELECT rs.route_id,
+                   MAX(ST_Length(sl.geom::geography)) AS max_length_m
+            FROM route_shapes rs
+            JOIN shape_lines sl ON sl.gtfs_shape_id = rs.gtfs_shape_id
+            JOIN routes r ON r.id = rs.route_id
+            WHERE r.feed_id = @feedId{scopeFilter}
+            GROUP BY rs.route_id
+        )
+        UPDATE routes r
+        SET longest_trip_length_m = sl.max_length_m
+        FROM shape_lengths sl
+        WHERE r.id = sl.route_id;";
+
+    int updated;
+    await using (var cmd = new NpgsqlCommand(updateSql, conn, tx))
+    {
+        cmd.Parameters.AddWithValue("feedId", feedId);
+        cmd.CommandTimeout = 0;
+        updated = await cmd.ExecuteNonQueryAsync();
+    }
+
+    var clearSql = $@"
+        UPDATE routes r
+        SET longest_trip_length_m = NULL
+        WHERE r.feed_id = @feedId{scopeFilter}
+          AND NOT EXISTS (
+              SELECT 1 FROM route_shapes rs WHERE rs.route_id = r.id
+          );";
+    await using (var cmd = new NpgsqlCommand(clearSql, conn, tx))
+    {
+        cmd.Parameters.AddWithValue("feedId", feedId);
+        cmd.CommandTimeout = 0;
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    return updated;
 }
 
 static int CountDataRows(string filePath)

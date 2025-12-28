@@ -7,13 +7,28 @@ namespace TransitTrackerWebApi.Repositories;
 
 public class RoutesRepository(AppDbContext context)
 {
-    public async Task<List<Route>> GetAllRoutesAsync()
+    public async Task<List<Route>> GetAllRoutesAsync(int offset, int limit)
     {
-        return await context.Routes
+        var safeOffset = Math.Max(0, offset);
+        var safeLimit = Math.Max(0, limit);
+
+        var query = context.Routes
             .Include(a => a.Agency)
             .Include(r => r.Feed)
-            .Take(25)
-            .ToListAsync();
+            .OrderBy(r => r.Id)
+            .AsQueryable();
+
+        if (safeOffset > 0)
+        {
+            query = query.Skip(safeOffset);
+        }
+
+        if (safeLimit > 0)
+        {
+            query = query.Take(safeLimit);
+        }
+
+        return await query.ToListAsync();
     }
 
     public async Task<Route?> GetRouteByIdAsync(int id)

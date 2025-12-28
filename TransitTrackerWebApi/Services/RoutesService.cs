@@ -5,7 +5,7 @@ namespace TransitTrackerWebApi.Services;
 
 public interface IRoutesService
 {
-    Task<IEnumerable<Route>> GetAllRoutesAsync();
+    Task<IEnumerable<Route>> GetAllRoutesAsync(int offset, int limit);
     Task<Route?> GetRouteByIdAsync(int id);
     Task<Route> AddRouteAsync(Route route);
     Task<bool> UpdateRouteAsync(Route route);
@@ -16,9 +16,9 @@ public interface IRoutesService
 
 public class RoutesService(RoutesRepository routesRepository) : IRoutesService
 {
-    public async Task<IEnumerable<Route>> GetAllRoutesAsync()
+    public async Task<IEnumerable<Route>> GetAllRoutesAsync(int offset, int limit)
     {
-        return await routesRepository.GetAllRoutesAsync();
+        return await routesRepository.GetAllRoutesAsync(offset, limit);
     }
 
     public async Task<Route?> GetRouteByIdAsync(int id)
