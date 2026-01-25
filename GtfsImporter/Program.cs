@@ -414,6 +414,10 @@ static async Task<(int Inserted, int Updated)> ImportRoutes(
         var agencyIdRaw = GetField(row, "agency_id");
 
         _ = int.TryParse(routeTypeRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var routeType);
+        if (!IsRailRouteType(routeType))
+        {
+            continue;
+        }
 
         var agencyId = defaultAgencyId;
         if (!string.IsNullOrWhiteSpace(agencyIdRaw) && agencyMap.TryGetValue(agencyIdRaw, out var mappedId))
@@ -480,6 +484,31 @@ static async Task<(int Inserted, int Updated)> ImportRoutes(
 
     UpdateProgress("Importing routes", totalRecords, totalRecords, timer, ref lastLog, true);
     return (inserted, updated);
+}
+
+static bool IsRailRouteType(int routeType)
+{
+    if (routeType is 0 or 1 or 2 or 5 or 7 or 12)
+    {
+        return true;
+    }
+
+    if (routeType >= 100 && routeType <= 199)
+    {
+        return true;
+    }
+
+    if (routeType >= 400 && routeType <= 499)
+    {
+        return true;
+    }
+
+    if (routeType >= 900 && routeType <= 999)
+    {
+        return true;
+    }
+
+    return routeType == 1400;
 }
 
 static async Task<int> ImportShapes(
